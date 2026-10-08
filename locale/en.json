@@ -1,0 +1,4 @@
+{
+  "title": "DeepSeek billing period",
+  "description": "Shows the current DeepSeek API billing period (peak / off-peak) and a countdown to the next one below the composer, using Beijing time and Chinese public holidays."
+}

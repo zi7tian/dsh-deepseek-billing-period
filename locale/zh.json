@@ -1,0 +1,4 @@
+{
+  "title": "DeepSeek 计费时段",
+  "description": "在输入框下方显示当前 DeepSeek API 计费时段（高峰/空闲）与下一时段倒计时，按北京时间与中国法定节假日判断。"
+}
