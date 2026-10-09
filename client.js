@@ -362,6 +362,17 @@ window.__ModuleLoader__.load({
       primitives = null;
     }
 
+    /**
+     * Whether a value can be handed to `React.createElement`. Components built
+     * with `forwardRef`/`memo` are plain objects, not functions, so a
+     * `typeof value === 'function'` test would silently reject the host Button.
+     * @param value - candidate component
+     * @returns true when the value looks like a React component
+     */
+    function renderable(value) {
+      return value !== null && value !== undefined && (typeof value === 'function' || typeof value === 'object');
+    }
+
     /** localStorage key holding this plugin's user preferences. */
     const PREFS_KEY = 'dsh-deepseek-billing-period.prefs';
     /** Defaults: every peak-hour send is confirmed unless the user opts out. */
@@ -609,10 +620,10 @@ window.__ModuleLoader__.load({
     function ToggleControl(props) {
       const kind =
         props.kind === 'switch'
-          ? primitives && typeof primitives.Switch === 'function'
+          ? primitives && renderable(primitives.Switch)
             ? primitives.Switch
             : null
-          : primitives && typeof primitives.Checkbox === 'function'
+          : primitives && renderable(primitives.Checkbox)
             ? primitives.Checkbox
             : null;
       if (kind) {
@@ -682,7 +693,7 @@ window.__ModuleLoader__.load({
           props.skipNext ? React.createElement('div', null, t('dialog.skipHint')) : null,
         ),
       );
-      if (primitives && typeof primitives.Modal === 'function' && typeof primitives.Button === 'function') {
+      if (primitives && renderable(primitives.Modal) && renderable(primitives.Button)) {
         return React.createElement(
           primitives.Modal,
           {
@@ -1034,6 +1045,7 @@ window.__ModuleLoader__.load({
         PREFS_KEY: PREFS_KEY,
         DEFAULT_PREFS: DEFAULT_PREFS,
         SEND_LABEL_RE: SEND_LABEL_RE,
+        renderable: renderable,
         readPrefs: readPrefs,
         writePrefs: writePrefs,
         DICTS: DICTS,

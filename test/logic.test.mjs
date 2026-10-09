@@ -298,4 +298,16 @@ for (const key of [
   assert.ok(logic.DICTS.zh[key] && logic.DICTS.en[key], 'missing confirmation copy: ' + key);
 }
 
+// --- Host components may be forwardRef/memo objects, not functions ---------
+checks += 1;
+assert.equal(typeof logic.renderable, 'function', 'renderable must be exported');
+checks += 1;
+for (const value of [function Component() {}, { $$typeof: Symbol.for('react.forward_ref') }]) {
+  assert.equal(logic.renderable(value), true, 'a renderable component was rejected');
+}
+checks += 1;
+for (const value of [null, undefined, 'Modal', 42, true]) {
+  assert.equal(logic.renderable(value), false, 'a non-component was accepted: ' + String(value));
+}
+
 console.log('client billing-period logic: ' + checks + ' checks passed');

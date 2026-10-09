@@ -1,6 +1,6 @@
 {
   "name": "dsh-deepseek-billing-period",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "type": "module",
   "description": "Shows the current DeepSeek API billing period (peak / off-peak) below the composer, and confirms before sending during peak hours.",
   "keywords": [
@@ -41,7 +41,9 @@
     "locale",
     "icon.svg",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "screenshots",
+    "screenshots.json"
   ],
   "dsh": {
     "bundle": {
