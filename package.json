@@ -1,9 +1,28 @@
 {
   "name": "dsh-deepseek-billing-period",
   "version": "1.2.0",
-  "private": true,
   "type": "module",
-  "description": "Shows the current DeepSeek API billing period (peak / off-peak) below the composer.",
+  "description": "Shows the current DeepSeek API billing period (peak / off-peak) below the composer, and confirms before sending during peak hours.",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek",
+    "deepseek-harness",
+    "cordis-plugin",
+    "billing",
+    "peak",
+    "off-peak"
+  ],
+  "homepage": "https://github.com/zi7tian/dsh-deepseek-billing-period#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zi7tian/dsh-deepseek-billing-period.git"
+  },
+  "bugs": {
+    "url": "https://github.com/zi7tian/dsh-deepseek-billing-period/issues"
+  },
+  "author": "zi7tian",
+  "license": "MIT",
   "meta": {
     "title": "DeepSeek 计费时段",
     "description": "在输入框下方显示当前 DeepSeek API 计费时段（高峰/空闲）与下一时段倒计时，按北京时间与中国法定节假日判断。"
@@ -21,7 +40,8 @@
     "cordis.patch.yml",
     "locale",
     "icon.svg",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "dsh": {
     "bundle": {

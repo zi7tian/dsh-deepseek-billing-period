@@ -35,7 +35,13 @@
 
 前置：已安装 `dsh` 并启用 web profile（本插件在 `dsh 0.2.0-rc.2` / Node v26 上验证）。
 
-### 方式一：从 GitHub 安装（推荐）
+### 方式一：从 npm 安装（推荐）
+
+```sh
+dsh plugin --profile web add dsh-deepseek-billing-period
+```
+
+### 方式二：从 GitHub 安装
 
 ```sh
 dsh plugin --profile web add github:zi7tian/dsh-deepseek-billing-period
@@ -43,7 +49,7 @@ dsh plugin --profile web add github:zi7tian/dsh-deepseek-billing-period
 
 `dsh plugin add` 会在该 profile 内执行安装，并把声明了 bundle 的包追加到 `dsh.profile.bundles`。完成后重启 `dsh web`，刷新页面即可在输入框下方看到计费时段药丸。
 
-### 方式二：本地克隆后 link（便于改代码）
+### 方式三：本地克隆后 link（便于改代码）
 
 ```sh
 git clone https://github.com/zi7tian/dsh-deepseek-billing-period.git
@@ -67,3 +73,7 @@ dsh plugin --profile web remove dsh-deepseek-billing-period
 ```
 
 点击它即可展开上方那张规则说明卡片。
+
+## 许可证
+
+[MIT](./LICENSE)
