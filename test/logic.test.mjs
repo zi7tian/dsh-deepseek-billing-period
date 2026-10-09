@@ -205,4 +205,97 @@ for (const key of Object.keys(logic.DICTS.en)) {
   assert.match(key, /^[a-z]+\.[A-Za-z0-9]+$/, 'unexpected dictionary key: ' + key);
 }
 
+// --- Preference store: peak-hour send confirmation -------------------------
+function memoryStorage(initial) {
+  const map = new Map(initial ? Object.entries(initial) : []);
+  return {
+    getItem: (key) => (map.has(key) ? map.get(key) : null),
+    setItem: (key, value) => {
+      map.set(key, String(value));
+    },
+    dump: () => Object.fromEntries(map),
+  };
+}
+
+checks += 1;
+assert.equal(logic.PREFS_KEY, 'dsh-deepseek-billing-period.prefs');
+checks += 1;
+assert.deepEqual(logic.DEFAULT_PREFS, { confirmOnPeakSend: true });
+
+checks += 1;
+assert.equal(logic.readPrefs(undefined).confirmOnPeakSend, true, 'no store falls back to asking');
+checks += 1;
+assert.equal(logic.readPrefs(memoryStorage()).confirmOnPeakSend, true, 'empty store asks every time');
+checks += 1;
+assert.equal(
+  logic.readPrefs(memoryStorage({ [logic.PREFS_KEY]: '{"confirmOnPeakSend":false}' })).confirmOnPeakSend,
+  false,
+);
+checks += 1;
+assert.equal(
+  logic.readPrefs(memoryStorage({ [logic.PREFS_KEY]: 'not json' })).confirmOnPeakSend,
+  true,
+  'a corrupt value falls back to asking',
+);
+checks += 1;
+assert.equal(
+  logic.readPrefs(memoryStorage({ [logic.PREFS_KEY]: '{"confirmOnPeakSend":"no"}' })).confirmOnPeakSend,
+  true,
+  'only an explicit false disables the confirmation',
+);
+checks += 1;
+assert.equal(logic.readPrefs(memoryStorage({ [logic.PREFS_KEY]: 'null' })).confirmOnPeakSend, true);
+
+checks += 1;
+const prefsStore = memoryStorage();
+logic.writePrefs(prefsStore, { confirmOnPeakSend: false });
+assert.equal(prefsStore.dump()[logic.PREFS_KEY], '{"confirmOnPeakSend":false}');
+checks += 1;
+assert.equal(logic.readPrefs(prefsStore).confirmOnPeakSend, false, 'the stored opt-out round-trips');
+checks += 1;
+logic.writePrefs(prefsStore, {});
+assert.equal(prefsStore.dump()[logic.PREFS_KEY], '{"confirmOnPeakSend":true}');
+checks += 1;
+assert.equal(logic.readPrefs(prefsStore).confirmOnPeakSend, true, 'the entry point can turn it back on');
+
+checks += 1;
+const hostileStore = {
+  getItem() {
+    throw new Error('blocked');
+  },
+  setItem() {
+    throw new Error('quota');
+  },
+};
+assert.equal(logic.readPrefs(hostileStore).confirmOnPeakSend, true);
+checks += 1;
+logic.writePrefs(hostileStore, { confirmOnPeakSend: false }); // must not throw
+
+// --- The send-gesture matcher must never mistake Stop for Send -------------
+checks += 1;
+for (const label of ['发送消息', '排队发送', '插话发送', 'Send message', 'Queue message', 'Steer message']) {
+  assert.ok(logic.SEND_LABEL_RE.test(label), 'send label not matched: ' + label);
+}
+checks += 1;
+for (const label of ['停止生成', 'Stop generating', '发送', '']) {
+  assert.equal(logic.SEND_LABEL_RE.test(label), false, 'non-send label matched: ' + label);
+}
+
+// --- Confirmation copy is present in both dictionaries ---------------------
+checks += 1;
+assert.equal(logic.DICTS.zh['dialog.askEvery'], '高峰时段发送消息时，是否需要每次确认');
+checks += 1;
+assert.equal(logic.DICTS.en['dialog.askEvery'], 'Ask every time before sending during peak hours');
+checks += 1;
+for (const key of [
+  'dialog.title',
+  'dialog.description',
+  'dialog.confirm',
+  'dialog.cancel',
+  'dialog.skipHint',
+  'setting.confirm',
+]) {
+  assert.ok(logic.DICTS.zh[key] && logic.DICTS.en[key], 'missing confirmation copy: ' + key);
+}
+
 console.log('client billing-period logic: ' + checks + ' checks passed');

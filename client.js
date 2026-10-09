@@ -213,6 +213,15 @@ window.__ModuleLoader__.load({
         'detail.coverage': '节假日数据覆盖 {years} 年；其他年份仅按周一至周五判断',
         'detail.uncovered': '尚未收录 {year} 年的法定节假日安排，该年仅按周一至周五判断',
         'aria.toggle': '展开或收起 DeepSeek 计费时段说明',
+        'dialog.title': '高峰时段发送确认',
+        'dialog.description': '当前处于高峰时段（全价）。这条消息将按高峰价格计费，仍要发送吗？',
+        'dialog.confirm': '确认发送',
+        'dialog.cancel': '取消',
+        'dialog.close': '关闭',
+        'dialog.askEvery': '高峰时段发送消息时，是否需要每次确认',
+        'dialog.skipHint': '已勾选：下次不再询问',
+        'setting.confirm': '高峰时段发送前确认',
+        'setting.confirmTitle': '关闭后高峰时段直接发送，不再弹窗确认',
       },
       en: {
         'label.peak': 'Peak · full price',
@@ -250,6 +259,16 @@ window.__ModuleLoader__.load({
         'detail.coverage': 'Holiday data covers {years}; other years follow the weekday rule only',
         'detail.uncovered': 'The {year} public-holiday schedule is not bundled yet — that year follows the weekday rule only',
         'aria.toggle': 'Toggle the DeepSeek billing-period details',
+        'dialog.title': 'Send during peak hours?',
+        'dialog.description':
+          'DeepSeek API pricing is at peak (full price) right now, so this message is billed at the peak rate. Send it anyway?',
+        'dialog.confirm': 'Send anyway',
+        'dialog.cancel': 'Cancel',
+        'dialog.close': 'Close',
+        'dialog.askEvery': 'Ask every time before sending during peak hours',
+        'dialog.skipHint': 'Checked: will not ask again',
+        'setting.confirm': 'Confirm before peak-hour sends',
+        'setting.confirmTitle': 'Turn off to send straight away during peak hours, without the dialog',
       },
     };
 
@@ -334,6 +353,116 @@ window.__ModuleLoader__.load({
       };
     }
 
+    /* Host primitives (dialog chrome) are optional: requiring them must never take
+       the whole plugin down, and the panel/dock markup above stays React-only. */
+    let primitives = null;
+    try {
+      primitives = require('@deepseek-ai/dsh-client-ui-primitives');
+    } catch (error) {
+      primitives = null;
+    }
+
+    /** localStorage key holding this plugin's user preferences. */
+    const PREFS_KEY = 'dsh-deepseek-billing-period.prefs';
+    /** Defaults: every peak-hour send is confirmed unless the user opts out. */
+    const DEFAULT_PREFS = { confirmOnPeakSend: true };
+
+    /**
+     * Read the durable preferences, tolerating an absent/corrupt store.
+     * @param storage - a `Storage`-like object (undefined outside the browser).
+     * @returns the resolved preferences (defaults when nothing is stored).
+     */
+    function readPrefs(storage) {
+      if (!storage || typeof storage.getItem !== 'function') return { confirmOnPeakSend: true };
+      try {
+        const raw = storage.getItem(PREFS_KEY);
+        if (typeof raw !== 'string' || raw === '') return { confirmOnPeakSend: true };
+        const parsed = JSON.parse(raw);
+        return { confirmOnPeakSend: !(parsed && parsed.confirmOnPeakSend === false) };
+      } catch (error) {
+        return { confirmOnPeakSend: true };
+      }
+    }
+
+    /**
+     * Persist the preferences, ignoring a store that refuses writes.
+     * @param storage - a `Storage`-like object.
+     * @param prefs - the preferences to store.
+     */
+    function writePrefs(storage, prefs) {
+      if (!storage || typeof storage.setItem !== 'function') return;
+      try {
+        storage.setItem(
+          PREFS_KEY,
+          JSON.stringify({ confirmOnPeakSend: !(prefs && prefs.confirmOnPeakSend === false) }),
+        );
+      } catch (error) {
+        /* private mode / quota: the in-memory preference still applies this session. */
+      }
+    }
+
+    /** The browser's durable store, or `null` when it is unavailable/blocked. */
+    function storageOf() {
+      try {
+        return typeof window !== 'undefined' && window.localStorage ? window.localStorage : null;
+      } catch (error) {
+        return null;
+      }
+    }
+
+    /** Localized accessible names the host gives its primary composer button. */
+    const SEND_LABEL_RE = /^(发送消息|排队发送|插话发送|Send message|Queue message|Steer message)$/;
+    /** Locale-independent fallback: the arrow glyph the send state renders. */
+    const SEND_ICON_SELECTOR = 'path[d^="M8.3125 0.980183"]';
+
+    /** The composer's editable element (`null` outside a composer). */
+    function editorOf(card) {
+      if (!card || typeof card.querySelector !== 'function') return null;
+      return card.querySelector('[contenteditable="true"], textarea, [role="textbox"]');
+    }
+
+    /**
+     * Walk up from our own dock node to the composer card that owns the editor.
+     * @param node - the plugin's root element.
+     * @returns the composer card element, or `null`.
+     */
+    function composerCardOf(node) {
+      if (typeof document === 'undefined' || !node) return null;
+      let current = node;
+      while (current && current.nodeType === 1 && current !== document.documentElement) {
+        if (editorOf(current)) return current;
+        current = current.parentElement;
+      }
+      return null;
+    }
+
+    /**
+     * The composer's primary button in its *send* state. While a turn runs the
+     * same button becomes Stop, which this deliberately does not match.
+     * @param card - the composer card element.
+     * @returns the send button, or `null`.
+     */
+    function sendButtonOf(card) {
+      if (!card || typeof card.querySelectorAll !== 'function') return null;
+      const buttons = card.querySelectorAll('button');
+      let iconMatch = null;
+      for (let index = 0; index < buttons.length; index += 1) {
+        const button = buttons[index];
+        const label = typeof button.getAttribute === 'function' ? button.getAttribute('aria-label') : null;
+        if (typeof label === 'string' && SEND_LABEL_RE.test(label)) return button;
+        if (iconMatch === null && button.querySelector(SEND_ICON_SELECTOR)) iconMatch = button;
+      }
+      return iconMatch;
+    }
+
+    /** The draft text, used to leave `/` commands to the command plane. */
+    function draftTextOf(card) {
+      const editor = editorOf(card);
+      if (!editor) return '';
+      if (typeof editor.value === 'string') return editor.value;
+      return typeof editor.textContent === 'string' ? editor.textContent : '';
+    }
+
     const ROOT_STYLE = {
       position: 'relative',
       display: 'flex',
@@ -364,9 +493,10 @@ window.__ModuleLoader__.load({
     const DOT_STYLE = { width: '6px', height: '6px', borderRadius: '50%', flex: 'none' };
     const DOT_IDLE_STYLE = { opacity: 0.75 };
     /* Floating card: the panel is taken out of flow and anchored above the pill,
-       so opening it never changes the composer dock's height. Surface matches the
-       host's own composer popover (translucent layer + hairline ring + soft
-       shadow) so it does not stand out from the rest of the UI. */
+       so opening it never changes the composer dock's height. The surface copies
+       the host's own composer popover recipe token for token (translucent layer +
+       hairline ring + soft shadow) rather than hardcoding colours, so it follows
+       the active palette in both light and dark mode. */
     const PANEL_ANCHOR_STYLE = {
       position: 'absolute',
       bottom: 'calc(100% + 6px)',
@@ -383,19 +513,229 @@ window.__ModuleLoader__.load({
       gap: '2px',
       width: 'max-content',
       maxWidth: 'min(560px, calc(100vw - 24px))',
-      padding: '10px 12px',
+      boxSizing: 'border-box',
+      padding: '12px',
+      border: 0,
       borderRadius: 'var(--dsw-radius-lg, 16px)',
-      background: 'rgba(248, 249, 250, 0.92)',
+      background: 'var(--dsw-specific-menu, var(--dsw-alias-bg-layer-2, #fff))',
+      backdropFilter: 'var(--dsw-menu-backdrop-filter)',
+      WebkitBackdropFilter: 'var(--dsw-menu-backdrop-filter)',
+      '--dsw-elevation-stroke-color': 'var(--dsw-alias-border-l1)',
       boxShadow:
-        '0 0 0 0.5px rgba(0, 0, 0, 0.04), 0 3px 8px 0 rgba(0, 0, 0, 0.04), 0 0 20px 0 rgba(0, 0, 0, 0.05)',
+        'var(--dsw-elevation-prominent, 0 0 0 0.5px rgba(0, 0, 0, 0.04), 0 3px 8px 0 rgba(0, 0, 0, 0.04), 0 0 20px 0 rgba(0, 0, 0, 0.05))',
       color: 'var(--dsw-alias-label-secondary)',
+      fontSize: '12px',
       textAlign: 'center',
       whiteSpace: 'normal',
-      lineHeight: 1.5,
+      lineHeight: '20px',
       fontVariantNumeric: 'tabular-nums',
     };
     const HEADING_STYLE = { color: 'var(--dsw-alias-label-primary)', marginBottom: '2px' };
     const LINE_STYLE = {};
+    /* Footer row of the rule card: the entry point that turns peak-hour send
+       confirmation back on after it was dismissed with "do not ask again". */
+    const PANEL_FOOTER_STYLE = {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: '6px',
+      marginTop: '4px',
+      paddingTop: '6px',
+      borderTop: '1px solid var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.06))',
+      color: 'var(--dsw-alias-label-tertiary, var(--dsw-alias-label-secondary))',
+      cursor: 'pointer',
+    };
+    const FALLBACK_CHECKBOX_STYLE = {
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: '6px',
+      cursor: 'pointer',
+      color: 'inherit',
+    };
+    /* Self-contained dialog surface, used only when host primitives are absent. */
+    const DIALOG_MASK_STYLE = {
+      position: 'fixed',
+      inset: 0,
+      zIndex: 1200,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      background: 'var(--dsw-alias-bg-overlay, rgba(0, 0, 0, 0.35))',
+    };
+    const DIALOG_CARD_STYLE = {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '10px',
+      width: 'min(420px, calc(100vw - 48px))',
+      boxSizing: 'border-box',
+      padding: '16px',
+      border: '1px solid var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.1))',
+      borderRadius: 'var(--dsw-radius-lg, 16px)',
+      background: 'var(--dsw-alias-bg-layer-2, #fff)',
+      boxShadow: 'var(--dsw-elevation-prominent, 0 8px 24px rgba(0, 0, 0, 0.12))',
+      color: 'var(--dsw-alias-label-secondary)',
+      fontSize: '13px',
+      lineHeight: '20px',
+      textAlign: 'left',
+    };
+    const DIALOG_TITLE_STYLE = { color: 'var(--dsw-alias-label-primary)', fontSize: '15px', fontWeight: 600 };
+    const DIALOG_OPTION_STYLE = {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '2px',
+      color: 'var(--dsw-alias-label-tertiary, var(--dsw-alias-label-secondary))',
+      fontSize: '12px',
+    };
+    const DIALOG_FOOTER_STYLE = { display: 'flex', justifyContent: 'flex-end', gap: '8px' };
+    const DIALOG_BUTTON_STYLE = {
+      padding: '6px 14px',
+      borderRadius: 'var(--dsw-radius-md, 8px)',
+      border: '1px solid var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.1))',
+      background: 'transparent',
+      color: 'var(--dsw-alias-label-primary)',
+      font: 'inherit',
+      cursor: 'pointer',
+    };
+    const DIALOG_CONFIRM_STYLE = Object.assign({}, DIALOG_BUTTON_STYLE, {
+      border: '1px solid transparent',
+      background: 'var(--dsw-alias-interactive-bg-hover, rgba(38, 49, 72, 0.06))',
+      fontWeight: 600,
+    });
+
+    /**
+     * A host switch/checkbox when the primitives package is loaded, and a plain
+     * native input otherwise — either way the caller owns any visible text.
+     */
+    function ToggleControl(props) {
+      const kind =
+        props.kind === 'switch'
+          ? primitives && typeof primitives.Switch === 'function'
+            ? primitives.Switch
+            : null
+          : primitives && typeof primitives.Checkbox === 'function'
+            ? primitives.Checkbox
+            : null;
+      if (kind) {
+        return React.createElement(kind, {
+          checked: props.checked === true,
+          onChange: props.onChange,
+          label: props.label,
+          title: props.title,
+        });
+      }
+      return React.createElement(
+        'label',
+        { style: FALLBACK_CHECKBOX_STYLE, title: props.title },
+        React.createElement('input', {
+          type: 'checkbox',
+          checked: props.checked === true,
+          onChange: function (event) {
+            props.onChange(event.target.checked);
+          },
+        }),
+        props.kind === 'switch' ? null : React.createElement('span', null, props.label),
+      );
+    }
+
+    /**
+     * The peak-hour send confirmation. Presentational only: the caller owns the
+     * pending gesture, the preference write and the replay.
+     * @param props.open - whether a send is waiting for an answer.
+     * @param props.t - translator for the plugin namespace.
+     * @param props.skipNext - the "do not ask again" checkbox state.
+     */
+    function PeakSendDialog(props) {
+      const t = props.t;
+      React.useEffect(
+        function () {
+          if (!props.open) {
+            return undefined;
+          }
+          function onKeyDown(event) {
+            if (event.key === 'Escape') {
+              props.onCancel();
+            }
+          }
+          window.addEventListener('keydown', onKeyDown, true);
+          return function () {
+            window.removeEventListener('keydown', onKeyDown, true);
+          };
+        },
+        [props.open, props.onCancel],
+      );
+      if (!props.open) {
+        return null;
+      }
+      const body = React.createElement(
+        'div',
+        { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
+        React.createElement('div', null, t('dialog.description')),
+        React.createElement(
+          'div',
+          { style: DIALOG_OPTION_STYLE },
+          React.createElement(ToggleControl, {
+            kind: 'checkbox',
+            checked: props.skipNext,
+            onChange: props.onToggleSkip,
+            label: t('dialog.askEvery'),
+          }),
+          props.skipNext ? React.createElement('div', null, t('dialog.skipHint')) : null,
+        ),
+      );
+      if (primitives && typeof primitives.Modal === 'function' && typeof primitives.Button === 'function') {
+        return React.createElement(
+          primitives.Modal,
+          {
+            open: true,
+            onClose: props.onCancel,
+            title: t('dialog.title'),
+            closeLabel: t('dialog.close'),
+            footer: [
+              React.createElement(
+                primitives.Button,
+                { key: 'cancel', variant: 'ghost', onClick: props.onCancel },
+                t('dialog.cancel'),
+              ),
+              React.createElement(
+                primitives.Button,
+                { key: 'confirm', variant: 'primary', onClick: props.onConfirm },
+                t('dialog.confirm'),
+              ),
+            ],
+          },
+          body,
+        );
+      }
+      return React.createElement(
+        'div',
+        { style: DIALOG_MASK_STYLE },
+        React.createElement(
+          'div',
+          {
+            role: 'dialog',
+            'aria-modal': 'true',
+            'aria-label': t('dialog.title'),
+            style: DIALOG_CARD_STYLE,
+          },
+          React.createElement('div', { style: DIALOG_TITLE_STYLE }, t('dialog.title')),
+          body,
+          React.createElement(
+            'div',
+            { style: DIALOG_FOOTER_STYLE },
+            React.createElement(
+              'button',
+              { type: 'button', style: DIALOG_BUTTON_STYLE, onClick: props.onCancel },
+              t('dialog.cancel'),
+            ),
+            React.createElement(
+              'button',
+              { type: 'button', style: DIALOG_CONFIRM_STYLE, onClick: props.onConfirm },
+              t('dialog.confirm'),
+            ),
+          ),
+        ),
+      );
+    }
 
     function BillingPeriod(props) {
       const t = makeTranslate(props.t);
@@ -405,6 +745,80 @@ window.__ModuleLoader__.load({
         return Date.now();
       });
       const rootRef = React.useRef(null);
+      /* Peak-hour send confirmation: the durable preference, the send gesture that
+         is waiting for an answer, the "do not ask again" checkbox, and the bypass
+         flag that lets the confirmed gesture through untouched. */
+      const [prefs, setPrefs] = React.useState(function () {
+        return readPrefs(storageOf());
+      });
+      const [pending, setPending] = React.useState(null);
+      const [skipNext, setSkipNext] = React.useState(false);
+      const pendingRef = React.useRef(null);
+      const bypassRef = React.useRef(false);
+      pendingRef.current = pending;
+
+      function setConfirm(next) {
+        const value = next === true;
+        setPrefs({ confirmOnPeakSend: value });
+        writePrefs(storageOf(), { confirmOnPeakSend: value });
+      }
+
+      /* Returning the caret to the composer keeps the next Enter a real composer
+         gesture instead of a dead key press on a detached dialog button. */
+      function focusComposer() {
+        const card = composerCardOf(rootRef.current);
+        const editor = card ? editorOf(card) : null;
+        if (editor && typeof editor.focus === 'function') {
+          try {
+            editor.focus();
+          } catch (error) {
+            /* the editor may already be gone */
+          }
+        }
+      }
+
+      function dismissPending() {
+        pendingRef.current = null;
+        setPending(null);
+        setSkipNext(false);
+        focusComposer();
+      }
+
+      /* Replay the intercepted gesture; the bypass flag keeps our own listeners
+         from intercepting it a second time. */
+      function confirmPending() {
+        const request = pendingRef.current;
+        pendingRef.current = null;
+        setPending(null);
+        setSkipNext(false);
+        if (skipNext) {
+          setConfirm(false);
+        }
+        bypassRef.current = true;
+        try {
+          if (request && request.kind === 'click' && request.button && typeof request.button.click === 'function') {
+            request.button.click();
+          } else if (
+            request &&
+            typeof KeyboardEvent === 'function' &&
+            request.target &&
+            typeof request.target.dispatchEvent === 'function'
+          ) {
+            request.target.dispatchEvent(
+              new KeyboardEvent('keydown', {
+                key: 'Enter',
+                code: 'Enter',
+                keyCode: 13,
+                which: 13,
+                bubbles: true,
+                cancelable: true,
+              }),
+            );
+          }
+        } finally {
+          bypassRef.current = false;
+        }
+      }
 
       React.useEffect(function () {
         const handle = setInterval(function () {
@@ -441,6 +855,76 @@ window.__ModuleLoader__.load({
           document.removeEventListener('keydown', onKeyDown, true);
         };
       }, [open]);
+
+      /* Peak-hour interception. Both listeners sit on `document` in the capture
+         phase, ahead of the host's own window-bubble dispatch, so the gesture can
+         be cancelled before it submits; the confirmed one is replayed by
+         confirmPending() through the bypass flag. */
+      React.useEffect(
+        function () {
+          if (!prefs.confirmOnPeakSend) {
+            return undefined;
+          }
+          function intercept(card, gesture) {
+            if (bypassRef.current || pendingRef.current) {
+              return;
+            }
+            if (!evaluate(Date.now()).peak) {
+              return;
+            }
+            gesture.preventDefault();
+            gesture.stopImmediatePropagation();
+            setSkipNext(false);
+            pendingRef.current = card;
+            setPending(card);
+          }
+          function onKeyDownCapture(event) {
+            if (event.key !== 'Enter' || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) {
+              return;
+            }
+            if (event.isComposing === true || event.keyCode === 229) {
+              return;
+            }
+            const card = composerCardOf(rootRef.current);
+            if (!card) {
+              return;
+            }
+            const editor = editorOf(card);
+            const target = event.target;
+            if (!editor || !target || (target !== editor && !(editor.contains && editor.contains(target)))) {
+              return;
+            }
+            const draft = draftTextOf(card);
+            if (draft.trim().charAt(0) === '/') {
+              /* A slash command is not a billable message; let the command plane have it. */
+              return;
+            }
+            intercept({ kind: 'key', button: sendButtonOf(card), target: target }, event);
+          }
+          function onClickCapture(event) {
+            const target = event.target;
+            if (!target || typeof target.closest !== 'function') {
+              return;
+            }
+            const button = target.closest('button');
+            if (!button) {
+              return;
+            }
+            const card = composerCardOf(rootRef.current);
+            if (!card || !card.contains(button) || sendButtonOf(card) !== button) {
+              return;
+            }
+            intercept({ kind: 'click', button: button, target: null }, event);
+          }
+          document.addEventListener('keydown', onKeyDownCapture, true);
+          document.addEventListener('click', onClickCapture, true);
+          return function () {
+            document.removeEventListener('keydown', onKeyDownCapture, true);
+            document.removeEventListener('click', onClickCapture, true);
+          };
+        },
+        [prefs.confirmOnPeakSend],
+      );
 
       const view = describe(now, t);
       const pillStyle = Object.assign({}, PILL_STYLE, open || hover ? PILL_ACTIVE_STYLE : null);
@@ -483,14 +967,35 @@ window.__ModuleLoader__.load({
               { style: PANEL_ANCHOR_STYLE },
               React.createElement(
                 'div',
-                { style: PANEL_STYLE, role: 'tooltip' },
+                { style: PANEL_STYLE, role: 'dialog', 'aria-label': view.heading },
                 React.createElement('div', { style: HEADING_STYLE }, view.heading),
                 view.lines.map(function (line, index) {
                   return React.createElement('div', { key: index, style: LINE_STYLE }, line);
                 }),
+                /* Entry point back to the confirmation after "do not ask again". */
+                React.createElement(
+                  'div',
+                  { style: PANEL_FOOTER_STYLE },
+                  React.createElement(ToggleControl, {
+                    kind: 'switch',
+                    checked: prefs.confirmOnPeakSend,
+                    onChange: setConfirm,
+                    label: t('setting.confirm'),
+                    title: t('setting.confirmTitle'),
+                  }),
+                  React.createElement('span', null, t('setting.confirm')),
+                ),
               ),
             )
           : null,
+        React.createElement(PeakSendDialog, {
+          open: pending !== null,
+          t: t,
+          skipNext: skipNext,
+          onToggleSkip: setSkipNext,
+          onCancel: dismissPending,
+          onConfirm: confirmPending,
+        }),
       );
     }
 
@@ -526,6 +1031,11 @@ window.__ModuleLoader__.load({
       billingPeriod: {
         BJ_OFFSET_MS: BJ_OFFSET_MS,
         PEAK_WINDOWS: PEAK_WINDOWS,
+        PREFS_KEY: PREFS_KEY,
+        DEFAULT_PREFS: DEFAULT_PREFS,
+        SEND_LABEL_RE: SEND_LABEL_RE,
+        readPrefs: readPrefs,
+        writePrefs: writePrefs,
         DICTS: DICTS,
         describe: describe,
         fallbackTranslate: fallbackTranslate,
